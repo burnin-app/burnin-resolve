@@ -213,7 +213,7 @@ class MediaManager(QWidget):
                 end = 0
                 if frames:
                     start = 1001
-                    end = start + int(frames)
+                    end = start + (int(frames) - 1)
 
                 file_type.frame_range = [start, end, 1]
                 file_type.time_dependent = True
