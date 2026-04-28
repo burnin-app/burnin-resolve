@@ -1,0 +1,23 @@
+[package]
+name = "burnin-resolve"
+version = "0.1.0"
+
+
+[env.windows.RESOLVE_SCRIPT_API]
+values = ["set:C:/ProgramData/Blackmagic Design/DaVinci Resolve/Support/Developer/Scripting"]
+
+[env.windows.RESOLVE_SCRIPT_LIB]
+values = ["set:C:/Program Files/Blackmagic Design/DaVinci Resolve/fusionscript.dll"]
+
+[env.windows.PYTHONPATH]
+values = [
+    "append:C:/ProgramData/Blackmagic Design/DaVinci Resolve/Support/Developer/Scripting/Modules",
+    "append:{root}/python",
+    "append:C:/python3.10/Lib",
+    "append:C:/python3.10/DLLs"
+]
+
+[env.windows.PYTHONHOME]
+values = [
+    "set:C:/python3.10"
+]
