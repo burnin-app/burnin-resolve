@@ -18,7 +18,6 @@ from burnin_resolve.ui.widgets import ComboBox, Label
 from burnin_resolve.ui.window import MainWindow
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QPushButton,
     QVBoxLayout,
     QWidget,

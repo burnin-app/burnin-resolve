@@ -230,7 +230,7 @@ class MediaManager(QWidget):
         id = id.join("shot:" + self.buShotListCb.current_text())
         id = id.join("publishes")
         id = id.join("delivery")
-        id = id.join(name + "Mp4")
+        id = id.join(name + "_Mp4")
         component_id = id.join("v000")
 
         version_node = Node.new_version(component_id, FileType.Video)
