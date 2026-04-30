@@ -12,6 +12,7 @@ from burnin.entity.utils import TypeWrapper, node_name_from_component_path
 from burnin.entity.version import Version, VersionStatus
 from burnin.path import build_path_from_node
 from burnin.show.shot import BU_shot
+from burnin.utils import rename_file_sequence
 from burnin.utils import to_printf_pattern
 from burnin_resolve.resolve import Resolve
 from burnin_resolve.ui.widgets import ComboBox, Label
@@ -96,13 +97,27 @@ class MediaManager(QWidget):
             self.layout.addWidget(self.setAcesInputTransform)
 
             self.actionTypeCb = ComboBox(
-                "Action", ["Import Media", "Render Delivery Mp4"]
+                "Action", ["Import Media", "Render Delivery Mp4", "Render Delivery Exr"]
             )
+            self.actionTypeCb.currentTextChanged.connect(self.onActionTypeChanged)
             self.layout.addWidget(self.actionTypeCb)
 
-            self.buildButton = QPushButton("Build")
+            # build delivery timeline button
+            self.buildDeliveryTLButton = QPushButton("Build Timeline")
+            self.layout.addWidget(self.buildDeliveryTLButton)
+            self.buildDeliveryTLButton.clicked.connect(self.onRenderDeliveryExrBtn)
+            self.buildDeliveryTLButton.hide()
+
+            self.buildButton = QPushButton("Execute")
             self.layout.addWidget(self.buildButton)
             self.buildButton.clicked.connect(self.onBuildClicked)
+
+    def onActionTypeChanged(self):
+        text = self.actionTypeCb.current_text()
+        if text == "Render Delivery Exr":
+            self.buildDeliveryTLButton.show()
+        else:
+            self.buildDeliveryTLButton.hide()
 
     def onSeqChanged(self):
         selected_seq = self.buSeqListCb.current_text()
@@ -177,9 +192,16 @@ class MediaManager(QWidget):
                     elif type == "Render Delivery Mp4":
                         clip_name = self.import_media(version_node)
                         self.renderDeliveryMp4(clip_name)
+                    elif type == "Render Delivery Exr":
+                        self.renderDeliveryExr()
 
                 except Exception as e:
                     print(e)
+
+    def onRenderDeliveryExrBtn(self):
+        self.rs.invoke()
+        self.rs.set_current_timeline("DeliveryExrTimeline")
+
 
     def import_media(self, version_node: Node):
         node_file_path = build_path_from_node(version_node)
@@ -220,18 +242,134 @@ class MediaManager(QWidget):
                 f"Node is not an Image Type: {version_node.node_type.variant_name}"
             )
 
-    def renderDeliveryMp4(self, clip_name):
-        id: Thing = self.BU_shot.component_node_id
-        name = id.get_name_from_id()
+    def build_component_id(self, entity: str | None = None, component_suffix: str | None = None) -> Thing:
+        root_id = ""
+        if self.root_id:
+            root_id = self.root_id
+        show = "@/show:"
         if self.bu_show:
-            id.id.String = "@/show:" + self.bu_show
+            show += self.bu_show
+        id: Thing = Thing.from_ids(root_id, show)
         id = id.join("sequences")
         id = id.join("seq:" + self.buSeqListCb.current_text())
         id = id.join("shot:" + self.buShotListCb.current_text())
         id = id.join("publishes")
-        id = id.join("delivery")
-        id = id.join(name + "_Mp4")
+        if not entity:
+            entity = self.buEntityListCb.current_text()
+        id = id.join(entity)
+        component = self.buComponentListCb.current_text()
+        if component_suffix:
+            component += "_" + component_suffix
+        id = id.join(component)
         component_id = id.join("v000")
+        return component_id
+
+
+    def renderDeliveryExr(self):
+        timeline_name = "DeliveryExrTimeline"
+        component_id: Thing = self.build_component_id("delivery", "Exr")
+        self.rs.invoke()
+        self.rs.set_current_timeline(timeline_name)
+        clips = self.rs.get_clips_form_timeline(timeline_name)
+        if len(clips) > 0:
+            clip = clips[0]
+            clip = clip.GetMediaPoolItem()
+            clip_name = clip.GetName()
+            clip_prop = clip.GetClipProperty()
+            frames = clip_prop["Frames"]
+            # print(frames)
+            print(clip_prop)
+            print(component_id)
+
+            version_node = Node.new_version(component_id, FileType.Image)
+            try:
+                version_node: Node = (
+                    self.BU_shot.burnin_client.create_or_update_component_version(
+                        version_node
+                    )
+                )
+
+
+                file_path = build_path_from_node(version_node)
+                file_name = node_name_from_component_path(version_node.id.id.String)
+                print(file_path, file_name)
+
+                self.rs.resolve.OpenPage("deliver")
+                settings = {
+                    "SelectAllFrames": True,
+                    "TargetDir": str(file_path),
+                    "CustomName": str(file_name),
+                }
+                self.rs.set_render_settings(settings)
+                # render_codecs = self.rs.project.GetRenderCodecs("EXR")
+                self.rs.project.SetCurrentRenderFormatAndCodec("EXR", "RGBHalf")
+
+                job_id = self.rs.add_render_job()
+                if not job_id:
+                    print("Failed to create render job")
+                    exit()
+                print(f"Created job: {job_id}")
+                self.rs.start_rendering(job_id)
+
+                print("Rendering started...")
+
+                while self.rs.is_rendering_in_progress():
+                    time.sleep(1)
+
+                print("✅ Render finished!")
+
+                version_type: Version = version_node.node_type.data
+                version_type.comment = "Ingested from Resolve"
+                version_type.software = "resolve"
+                version_type.head_file = str(file_name) + ".####.exr"
+                version_type.status = VersionStatus.Published
+
+                file_type: Image = version_type.file_type.data
+                file_type.file_name = str(file_name)
+                file_type.file_format = "exr"
+                width = self.rs.project.GetSetting("timelineResolutionWidth")
+                height = self.rs.project.GetSetting("timelineResolutionHeight")
+                file_type.resolution = (int(width), int(height))
+                start = 0
+                end = 0
+                if frames:
+                    start = 1001
+                    end = start + (int(frames) - 1)
+
+                file_type.frame_range = [start, end, 1]
+                file_type.time_dependent = True
+
+                print(file_type)
+
+                version_type.file_type = TypeWrapper(file_type)
+                version_node.node_type = TypeWrapper(version_type)
+                version_node.created_at = None
+
+                version_node = self.BU_shot.burnin_client.commit_component_version(
+                    version_node
+                )
+                version_node_type: Version = version_node.node_type.data
+                print(version_node)
+                print(version_node_type)
+                rename_file_sequence(str(file_path), str(file_name), 1001, "exr")
+
+            except Exception as e:
+                print(str(e))
+
+    def renderDeliveryMp4(self, clip_name):
+        # id: Thing = self.BU_shot.component_node_id
+        # name = id.get_name_from_id()
+        # if self.bu_show:
+        #     id.id.String = "@/show:" + self.bu_show
+        # id = id.join("sequences")
+        # id = id.join("seq:" + self.buSeqListCb.current_text())
+        # id = id.join("shot:" + self.buShotListCb.current_text())
+        # id = id.join("publishes")
+        # id = id.join("delivery")
+        # id = id.join(name + "_Mp4")
+        # component_id = id.join("v000")
+
+        component_id: Thing = self.build_component_id("delivery", "_Mp4")
 
         version_node = Node.new_version(component_id, FileType.Video)
         try:
