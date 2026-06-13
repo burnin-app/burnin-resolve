@@ -12,14 +12,15 @@ from burnin.entity.utils import TypeWrapper, node_name_from_component_path
 from burnin.entity.version import Version, VersionStatus
 from burnin.path import build_path_from_node
 from burnin.show.shot import BU_shot
-from burnin.utils import rename_file_sequence
-from burnin.utils import to_printf_pattern
+from burnin.utils import rename_file_sequence, to_printf_pattern
 from burnin_resolve.resolve import Resolve
 from burnin_resolve.ui.widgets import ComboBox, Label
 from burnin_resolve.ui.window import MainWindow
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QHBoxLayout,
+    QListWidget,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -102,6 +103,35 @@ class MediaManager(QWidget):
             self.actionTypeCb.currentTextChanged.connect(self.onActionTypeChanged)
             self.layout.addWidget(self.actionTypeCb)
 
+            # render multiple shots
+            self.renderMultiShotToggle = ComboBox(
+                "Render Type", ["Single Shot", "Multi Shot"]
+            )
+            self.renderMultiShotToggle.currentTextChanged.connect(
+                self.onMultiShotToggleChanged
+            )
+            self.layout.addWidget(self.renderMultiShotToggle)
+
+            # multishot render list
+            self.multi_shot_list = []
+            self.buMultiShotList = QListWidget()
+            self.layout.addWidget(self.buMultiShotList)
+
+            # multi shot append button
+            self.multiShotRemoveBtn = QPushButton("Remove Shot")
+            self.multiShotRemoveBtn.clicked.connect(self.onMultiShotRemoveClicked)
+
+            # multi shot append button
+            self.multiShotAppendBtn = QPushButton("Append Shot")
+            self.multiShotAppendBtn.clicked.connect(self.onMultiShotAppendClicked)
+
+            # multishot buttons
+            self.multi_btn_layout = QHBoxLayout()
+            self.layout.addLayout(self.multi_btn_layout)
+            self.multi_btn_layout.addWidget(self.multiShotRemoveBtn)
+            self.multi_btn_layout.addWidget(self.multiShotAppendBtn)
+            self.onMultiShotToggleChanged()
+
             # build delivery timeline button
             self.buildDeliveryTLButton = QPushButton("Build Timeline")
             self.layout.addWidget(self.buildDeliveryTLButton)
@@ -125,6 +155,48 @@ class MediaManager(QWidget):
         self.BU_shot.load_shot_list(selected_seq)
         self.buShotListCb.set_items(self.BU_shot.shot_names_list)
         self.onShotChanged()
+
+    def onMultiShotAppendClicked(self):
+        empty_value_found = False
+        seq = self.buSeqListCb.current_text()
+        shot = self.buShotListCb.current_text()
+        entity = self.buEntityListCb.current_text()
+        component = self.buComponentListCb.current_text()
+        version = self.buVersionListCb.current_text()
+
+        k = [seq, shot, entity, component, version]
+        for i in k:
+            if not i:
+                empty_value_found = True
+                break
+            if len(i) == 0:
+                empty_value_found = True
+                break
+
+        if not empty_value_found:
+            output = seq + "/" + shot + "/" + entity + "/" + component + "/" + version
+            if output not in self.multi_shot_list:
+                self.multi_shot_list.append(output)
+                self.buMultiShotList.addItem(output)
+
+    def onMultiShotRemoveClicked(self):
+        item = self.buMultiShotList.currentItem()
+        if item:
+            row = self.buMultiShotList.row(item)
+            self.buMultiShotList.takeItem(row)
+            value = item.text()
+            self.multi_shot_list.remove(value)
+
+    def onMultiShotToggleChanged(self):
+        type = self.renderMultiShotToggle.current_text()
+        if type == "Multi Shot":
+            self.buMultiShotList.show()
+            self.multiShotAppendBtn.show()
+            self.multiShotRemoveBtn.show()
+        else:
+            self.buMultiShotList.hide()
+            self.multiShotAppendBtn.hide()
+            self.multiShotRemoveBtn.hide()
 
     def onShotChanged(self):
         selected_shot = self.buShotListCb.current_text()
@@ -162,46 +234,88 @@ class MediaManager(QWidget):
         else:
             return None
 
+    def buildComponentNodeId(self, value) -> Thing | None:
+        if self.root_id and self.bu_show:
+            items = value.split("/")
+            if len(items) == 5:
+                id: Thing = Thing.from_ids(self.root_id, "@/show:" + self.bu_show)
+                id = id.join("sequences")
+                id = id.join("seq:" + items[0])
+                id = id.join("shot:" + items[1])
+                id = id.join("publishes")
+                id = id.join(items[2])
+                id = id.join(items[3])
+                id = id.join(items[4])
+                return id
+            else:
+                return None
+
+        return None
+
     def onBuildClicked(self):
         selected_version = self.buVersionListCb.current_text()
-        if self.BU_shot:
-            component_id = self.getComponentNodeId()
-            if component_id:
-                version_id = component_id.join(selected_version)
-                try:
-                    version_node = self.BU_shot.burnin_client.get_version_node(
-                        version_id
-                    )
-                    if not version_node.node_type.variant_name == "Version":
-                        raise Exception(
-                            f"Invalid node type: {version_node.node_type.variant_name}"
-                        )
-
+        multi_shot_toggled = self.renderMultiShotToggle.current_text()
+        if multi_shot_toggled == "Multi Shot":
+            for i in range(self.buMultiShotList.count()):
+                value = self.buMultiShotList.item(i).text()
+                component_id = self.buildComponentNodeId(value)
+                if component_id:
+                    values = value.split("/")
+                    seq = values[0]
+                    shot = values[1]
+                    print(component_id)
                     type = self.actionTypeCb.current_text()
 
-                    # self.resolve = dvr.scriptapp("Resolve")
-                    # self.pm = self.resolve.GetProjectManager()
-                    # self.project = self.pm.GetCurrentProject()
-                    self.rs.invoke()
+                    if type == "Render Delivery Mp4":
+                        self.build(component_id, seq=seq, shot=shot)
+                    else:
+                        print("Multi Shot Render not supported yet!")
 
-                    if not self.rs.project:
-                        print("No project open")
-                        exit()
-                    if type == "Import Media":
-                        self.import_media(version_node)
-                    elif type == "Render Delivery Mp4":
-                        clip_name = self.import_media(version_node)
-                        self.renderDeliveryMp4(clip_name)
-                    elif type == "Render Delivery Exr":
-                        self.renderDeliveryExr()
+        else:
+            if self.BU_shot:
+                component_id = self.getComponentNodeId()
+                if component_id:
+                    version_id = component_id.join(selected_version)
+                    self.build(version_id)
 
-                except Exception as e:
-                    print(e)
+    def build(
+        self,
+        version_id: Thing,
+        seq: str | None = None,
+        shot: str | None = None,
+        entity: str | None = None,
+    ):
+        try:
+            version_node = self.BU_shot.burnin_client.get_version_node(version_id)
+            if not version_node.node_type.variant_name == "Version":
+                raise Exception(
+                    f"Invalid node type: {version_node.node_type.variant_name}"
+                )
+
+            type = self.actionTypeCb.current_text()
+
+            # self.resolve = dvr.scriptapp("Resolve")
+            # self.pm = self.resolve.GetProjectManager()
+            # self.project = self.pm.GetCurrentProject()
+            self.rs.invoke()
+
+            if not self.rs.project:
+                print("No project open")
+                exit()
+            if type == "Import Media":
+                self.import_media(version_node)
+            elif type == "Render Delivery Mp4":
+                clip_name = self.import_media(version_node)
+                self.renderDeliveryMp4(clip_name, seq=seq, shot=shot, entity=entity)
+            elif type == "Render Delivery Exr":
+                self.renderDeliveryExr()
+
+        except Exception as e:
+            print(e)
 
     def onRenderDeliveryExrBtn(self):
         self.rs.invoke()
         self.rs.set_current_timeline("DeliveryExrTimeline")
-
 
     def import_media(self, version_node: Node):
         node_file_path = build_path_from_node(version_node)
@@ -242,7 +356,13 @@ class MediaManager(QWidget):
                 f"Node is not an Image Type: {version_node.node_type.variant_name}"
             )
 
-    def build_component_id(self, entity: str | None = None, component_suffix: str | None = None) -> Thing:
+    def build_component_id(
+        self,
+        seq: str | None,
+        shot: str | None,
+        entity: str | None = None,
+        component_suffix: str | None = None,
+    ) -> Thing:
         root_id = ""
         if self.root_id:
             root_id = self.root_id
@@ -251,8 +371,12 @@ class MediaManager(QWidget):
             show += self.bu_show
         id: Thing = Thing.from_ids(root_id, show)
         id = id.join("sequences")
-        id = id.join("seq:" + self.buSeqListCb.current_text())
-        id = id.join("shot:" + self.buShotListCb.current_text())
+        if not seq:
+            seq = self.buSeqListCb.current_text()
+        if not shot:
+            shot = self.buShotListCb.current_text()
+        id = id.join("seq:" + seq)
+        id = id.join("shot:" + shot)
         id = id.join("publishes")
         if not entity:
             entity = self.buEntityListCb.current_text()
@@ -264,10 +388,9 @@ class MediaManager(QWidget):
         component_id = id.join("v000")
         return component_id
 
-
     def renderDeliveryExr(self):
         timeline_name = "DeliveryExrTimeline"
-        component_id: Thing = self.build_component_id("delivery", "Exr")
+        component_id: Thing = self.build_component_id(None, None, "delivery", "Exr")
         self.rs.invoke()
         self.rs.set_current_timeline(timeline_name)
         clips = self.rs.get_clips_form_timeline(timeline_name)
@@ -288,7 +411,6 @@ class MediaManager(QWidget):
                         version_node
                     )
                 )
-
 
                 file_path = build_path_from_node(version_node)
                 file_name = node_name_from_component_path(version_node.id.id.String)
@@ -356,7 +478,13 @@ class MediaManager(QWidget):
             except Exception as e:
                 print(str(e))
 
-    def renderDeliveryMp4(self, clip_name):
+    def renderDeliveryMp4(
+        self,
+        clip_name,
+        seq: str | None = None,
+        shot: str | None = None,
+        entity: str | None = None,
+    ):
         # id: Thing = self.BU_shot.component_node_id
         # name = id.get_name_from_id()
         # if self.bu_show:
@@ -369,7 +497,7 @@ class MediaManager(QWidget):
         # id = id.join(name + "_Mp4")
         # component_id = id.join("v000")
 
-        component_id: Thing = self.build_component_id("delivery", "_Mp4")
+        component_id: Thing = self.build_component_id(seq, shot, "delivery", "_Mp4")
 
         version_node = Node.new_version(component_id, FileType.Video)
         try:
