@@ -268,6 +268,8 @@ class MediaManager(QWidget):
 
                     if type == "Render Delivery Mp4":
                         self.build(component_id, seq=seq, shot=shot)
+                    elif type == "Render Delivery Exr":
+                        self.build(component_id, seq=seq, shot=shot)
                     else:
                         print("Multi Shot Render not supported yet!")
 
@@ -308,7 +310,9 @@ class MediaManager(QWidget):
                 clip_name = self.import_media(version_node)
                 self.renderDeliveryMp4(clip_name, seq=seq, shot=shot, entity=entity)
             elif type == "Render Delivery Exr":
-                self.renderDeliveryExr()
+                clip_name = self.import_media(version_node)
+                print(clip_name, "CLIP_NAME")
+                self.renderDeliveryExr(clip_name, seq=seq, shot=shot, entity=entity)
 
         except Exception as e:
             print(e)
@@ -388,21 +392,38 @@ class MediaManager(QWidget):
         component_id = id.join("v000")
         return component_id
 
-    def renderDeliveryExr(self):
+    def renderDeliveryExr(
+        self,
+        clip_name,
+        seq: str | None = None,
+        shot: str | None = None,
+        entity: str | None = None,
+    ):
+
         timeline_name = "DeliveryExrTimeline"
-        component_id: Thing = self.build_component_id(None, None, "delivery", "Exr")
+        component_id: Thing = self.build_component_id(seq, shot, "delivery", "Exr")
+
         self.rs.invoke()
         self.rs.set_current_timeline(timeline_name)
-        clips = self.rs.get_clips_form_timeline(timeline_name)
-        if len(clips) > 0:
-            clip = clips[0]
-            clip = clip.GetMediaPoolItem()
-            clip_name = clip.GetName()
+        # clips = self.rs.get_clips_form_timeline(timeline_name)
+        # if len(clips) > 0:
+        #     clip = clips[0]
+        #     clip = clip.GetMediaPoolItem()
+        #     clip_name = clip.GetName()
+        #     clip_prop = clip.GetClipProperty()
+        #     frames = clip_prop["Frames"]
+        #     # print(frames)
+        #     print(clip_prop)
+        #     print(component_id)
+
+        clip = self.rs.get_clip_from_name(clip_name)
+        if clip:
             clip_prop = clip.GetClipProperty()
+            print(clip_prop, "CLIP_PROP")
             frames = clip_prop["Frames"]
-            # print(frames)
-            print(clip_prop)
-            print(component_id)
+            self.rs.clear_timeline(timeline_name)
+            self.rs.append_to_timeline([clip])
+            print(frames, "FRAMES")
 
             version_node = Node.new_version(component_id, FileType.Image)
             try:
@@ -497,7 +518,7 @@ class MediaManager(QWidget):
         # id = id.join(name + "_Mp4")
         # component_id = id.join("v000")
 
-        component_id: Thing = self.build_component_id(seq, shot, "delivery", "_Mp4")
+        component_id: Thing = self.build_component_id(seq, shot, "delivery", "Mp4")
 
         version_node = Node.new_version(component_id, FileType.Video)
         try:
